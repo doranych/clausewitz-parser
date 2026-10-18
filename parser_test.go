@@ -118,6 +118,7 @@ func TestIDs(t *testing.T) {
 		{name: "negative", in: "starbases={ -1 }", wantErr: true},
 		{name: "nested object", in: "starbases={ { 1 } }", wantErr: true},
 		{name: "keyed element", in: "starbases={ a=1 }", wantErr: true},
+		{name: "scalar", in: "starbases=1", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

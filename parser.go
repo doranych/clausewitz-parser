@@ -1,4 +1,3 @@
-// Package clausewitz parses the text format of Paradox games (Clausewitz and Jomini engines).
 package clausewitz
 
 import (
@@ -20,7 +19,17 @@ type parser struct {
 	keep map[string]bool
 }
 
-// Parse builds the tree of data, skipping top-level entries not in keys when any are given; nodes share memory with data.
+// Parse reads data and returns the root container, whose Kids are the top-level entries in file order.
+//
+// With no keys, every entry is built. With keys, only top-level entries whose key is in keys are built;
+// the rest, including top-level list elements and anonymous containers, are skipped. Skipped entries are
+// still read token by token, so an unterminated string or a missing value inside them is still an error.
+// Keys select top-level entries only; nested entries with the same key are not affected.
+//
+// Key and Val of the returned nodes point into data rather than copying it,
+// so data must not be modified while the tree is in use.
+//
+// See the package documentation for the accepted syntax and the cases that return an error.
 func Parse(data []byte, keys ...string) (*Node, error) {
 	p := parser{lex: lexer{data: bytes.TrimPrefix(data, bom)}}
 	if len(keys) > 0 {
