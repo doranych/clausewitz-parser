@@ -6,7 +6,7 @@ A Go parser for the text format of Paradox games (Clausewitz and Jomini engines)
 go get github.com/doranych/clausewitz-parser
 ```
 
-This is personal project powered by coffee and passion. There's no long term support commitment, but any PRs are welcome. 
+This is a personal project powered by coffee and passion. There's no long-term support commitment, but any PRs are welcome.
 
 ## Usage
 
