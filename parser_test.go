@@ -65,9 +65,24 @@ func TestParseSaveFeatures(t *testing.T) {
 		},
 		{
 			name: "selected top-level keys only",
-			in:   "version=\"v4.5.2\" ships={ 1={ fleet=2 } } galactic_object={ 0={ name=\"Sol\" } } flag=rgb { 1 2 3 } { 4 } 5 country={ 0=none }",
+			in:   "version=\"v4.5.2\" ships={ 1={ fleet=2 } } galactic_object={ 0={ name=\"Sol\" } } flag=rgb { 1 2 3 } { 4 } 5 [[p] x=1 ] country={ 0=none }",
 			keys: []string{"galactic_object", "country"},
 			want: []*Node{obj("galactic_object", obj("0", qkv("name", "Sol"))), obj("country", kv("0", "none"))},
+		},
+		{
+			name: "escaped inline maths in a scripted effect",
+			in:   `value = @\[( 72 * $PROGRESS$ )] resource = $CATEGORY$`,
+			want: []*Node{kv("value", `@\[( 72 * $PROGRESS$ )]`), kv("resource", "$CATEGORY$")},
+		},
+		{
+			name: "equals without key is a value",
+			in:   "a={ =1 }",
+			want: []*Node{obj("a", item("="), item("1"))},
+		},
+		{
+			name: "top-level list of tags",
+			in:   "# Job tags\nfood\nminerals\n",
+			want: []*Node{item("food"), item("minerals")},
 		},
 		{
 			name: "selected key with unclosed skipped section",
@@ -91,10 +106,14 @@ func TestParseErrors(t *testing.T) {
 		in   string
 		keys []string
 	}{
-		{name: "equals without key", in: "=1"},
 		{name: "key without value at end", in: "a="},
 		{name: "unterminated string", in: `a="b`},
 		{name: "unterminated string in skipped section", in: `a={ b="c }`, keys: []string{"x"}},
+		{name: "lone exclamation mark", in: "a={ b ! c }"},
+		{name: "single bracket", in: "a={ [b] }"},
+		{name: "unterminated parameter block", in: "a={ [[b] c=d }"},
+		{name: "closing bracket outside parameter block", in: "a={ b ] }"},
+		{name: "unterminated interpolated variable", in: "a=@[b"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,6 @@
 # clausewitz-parser
 
-A Go parser for the text format of Paradox games (Clausewitz and Jomini engines), such as Stellaris saves. The library uses only the standard library; tests use testify.
+A Go parser for the text format of Paradox games (Clausewitz and Jomini engines), such as Stellaris saves and game script files. The library uses only the standard library; tests use testify.
 
 ```sh
 go get github.com/doranych/clausewitz-parser
@@ -29,6 +29,7 @@ for _, sys := range root.Get("galactic_object").Kids {
 - `Key` is nil for list elements; keys may repeat, so children keep file order.
 - `Val` holds a scalar, or a header such as `rgb` in `color = rgb { 1 2 3 }`.
 - `Kids` is nil for scalars and non-nil for containers, including empty ones.
+- `Op` holds an operator other than `=`, as in `count < 2`; `Param` marks a `[[name] ... ]` block.
 
 With keys given, other top-level entries are skipped without building nodes. Nodes share memory with `data`, so do not modify it while the tree is in use.
 
@@ -39,16 +40,18 @@ Values are read with `Get`, `All`, `Str`, `Bool`, `Int`, `Float`, `ID`, `IDs` an
 - Pairs, lists, mixed containers, repeated keys, several pairs on one line; indentation is ignored.
 - Quoted strings with `\"` escapes, comments, `;` as whitespace, UTF-8 BOM.
 - `rgb`, `hsv`, `hsv360`, `cylindrical`, `hex` and `LIST` headers.
+- Script syntax: operators `<`, `<=`, `>`, `>=`, `!=`, `?=`, `==`, `@variables`, inline maths `@[ ... ]`, `[[parameter]]` blocks, object templates.
 - Malformed files the games accept: stray `}`, containers left open at the end of the file.
 
-Not supported yet: comparison operators (`<`, `>=`, `?=`), `[[parameters]]`, object templates, Windows-1252 text.
+Not supported: Windows-1252 text, used by some older games.
 
 ## Tests
 
 ```sh
 go test ./...
-STELLARIS_SAVES=~/saves go test -run Golden ./...   # golden test on the saves listed in golden_test.go
 ```
+
+The golden test parses a real Stellaris 4.5.2 save from `testdata/saves`.
 
 Many cases are ported from [jomini](https://github.com/rakaly/jomini) (MIT, see `testdata/jomini/LICENSE`).
 

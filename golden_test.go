@@ -3,14 +3,12 @@ package clausewitz
 import (
 	"archive/zip"
 	"io"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Saves are not committed; STELLARIS_SAVES names the folder that holds them.
 func TestGoldenSaves(t *testing.T) {
 	tests := []struct {
 		file     string
@@ -29,11 +27,7 @@ func TestGoldenSaves(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.file, func(t *testing.T) {
-			path := filepath.Join(os.Getenv("STELLARIS_SAVES"), tc.file)
-			if _, err := os.Stat(path); os.Getenv("STELLARIS_SAVES") == "" || err != nil {
-				t.Skipf("save %s not found, set STELLARIS_SAVES", path)
-			}
-			zr, err := zip.OpenReader(path)
+			zr, err := zip.OpenReader(filepath.Join("testdata", "saves", tc.file))
 			require.NoError(t, err)
 			defer zr.Close()
 			f, err := zr.Open("gamestate")
