@@ -6,6 +6,8 @@ A Go parser for the text format of Paradox games (Clausewitz and Jomini engines)
 go get github.com/doranych/clausewitz-parser
 ```
 
+This is personal project powered by coffee and passion. There's no long term support commitment, but any PRs are welcome. 
+
 ## Usage
 
 ```go
@@ -49,6 +51,10 @@ STELLARIS_SAVES=~/saves go test -run Golden ./...   # golden test on the saves l
 ```
 
 Many cases are ported from [jomini](https://github.com/rakaly/jomini) (MIT, see `testdata/jomini/LICENSE`).
+
+## Acknowledgements
+
+Thanks to [PDX Tools](https://pdx.tools) and its parser [jomini](https://github.com/rakaly/jomini). Its tests document years of quirks in Paradox files, and this parser's behaviour on malformed input follows it.
 
 ## AI disclosure
 
