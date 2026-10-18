@@ -18,6 +18,8 @@ const NoID = math.MaxUint32
 //   - A container has Kids non-nil, possibly empty: foo={} gives Key "foo" and Kids of length 0.
 //   - A container with a header also has Val set: color=rgb { 1 2 3 } gives Key "color", Val "rgb" and three elements.
 //   - A list element has Key nil: in ships={ 0 1 } both children are list elements.
+//   - An entry with an operator other than = has Op set: count < 2 gives Key "count", Op "<", Val "2".
+//   - A parameter block has Param set: [[skill] a=b ] gives Key "skill", Param ParamSet and one child.
 //
 // Kids keep file order. Keys may repeat, as in planet=654 planet=655, so a container is a list rather than a map:
 // use Get for the first match and All for every match.
@@ -29,12 +31,30 @@ type Node struct {
 	Val []byte
 	// Quoted reports whether Val was a quoted string, which tells "123" from 123 and "rgb" from the rgb header.
 	Quoted bool
+	// Op is the operator between Key and the value: one of <, <=, >, >=, !=, ?= and ==.
+	// It is empty for = and when there is no operator, as in a list element or foo{ ... }.
+	Op string
+	// Param marks a parameter block such as [[name] ... ]; Key then holds the name without brackets.
+	Param Param
 	// Kids are the entries of a container in file order; nil for a scalar.
 	Kids []*Node
 }
 
+// Param tells a parameter block from an ordinary entry.
+type Param uint8
+
+const (
+	// NoParam is an ordinary entry.
+	NoParam Param = iota
+	// ParamSet is [[name] ... ]: the content applies when the parameter is given.
+	ParamSet
+	// ParamUnset is [[!name] ... ]: the content applies when the parameter is not given.
+	ParamUnset
+)
+
 // Get returns the first child whose key equals key, or nil if there is none.
-// Keys compare byte for byte and are case-sensitive; quoted and bare keys compare equal.
+// Keys compare byte for byte and are case-sensitive; quoted and bare keys compare equal,
+// and a parameter block matches by its name.
 // Get on a nil node returns nil, so lookups can be chained: root.Get("country").Get("0").Get("name").
 func (n *Node) Get(key string) *Node {
 	if n == nil {

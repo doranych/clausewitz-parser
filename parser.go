@@ -25,6 +25,7 @@ type parser struct {
 // the rest, including top-level list elements and anonymous containers, are skipped. Skipped entries are
 // still read token by token, so an unterminated string or a missing value inside them is still an error.
 // Keys select top-level entries only; nested entries with the same key are not affected.
+// A parameter block [[name] ... ] is selected by its name.
 //
 // Key and Val of the returned nodes point into data rather than copying it,
 // so data must not be modified while the tree is in use.
@@ -39,17 +40,19 @@ func Parse(data []byte, keys ...string) (*Node, error) {
 		}
 	}
 	root := &Node{Kids: []*Node{}}
-	if err := p.parseKids(root, 0); err != nil {
+	if err := p.parseKids(root, 0, tokEOF); err != nil {
 		return nil, err
 	}
 	return root, nil
 }
 
-func (p *parser) parseKids(parent *Node, depth int) error {
+// parseKids reads entries into parent up to closer: tokEOF for the root, tokClose for {, tokCloseParam for [[name].
+func (p *parser) parseKids(parent *Node, depth int, closer tokKind) error {
 	if depth > maxDepth {
 		return fmt.Errorf("nesting deeper than %d levels at offset %d", maxDepth, p.lex.pos)
 	}
-	filter := depth == 0 && p.keep != nil
+	top := closer == tokEOF
+	filter := top && p.keep != nil
 	for {
 		tok, err := p.lex.next()
 		if err != nil {
@@ -57,17 +60,21 @@ func (p *parser) parseKids(parent *Node, depth int) error {
 		}
 		switch tok.kind {
 		case tokEOF:
+			if closer == tokCloseParam {
+				return fmt.Errorf("unterminated parameter block at offset %d", p.lex.pos)
+			}
 			// Unclosed containers end with the file, as the games read them.
 			dropEmptyAnon(parent)
 			return nil
-		case tokClose:
-			if depth == 0 {
+		case tokClose, tokCloseParam:
+			if tok.kind == closer {
+				dropEmptyAnon(parent)
+				return nil
+			}
+			if top && tok.kind == tokClose {
 				continue
 			}
-			dropEmptyAnon(parent)
-			return nil
-		case tokEq:
-			return fmt.Errorf("unexpected = at offset %d", p.lex.pos-1)
+			return fmt.Errorf("unexpected closing bracket at offset %d", p.lex.pos-1)
 		case tokOpen:
 			if filter {
 				if err := p.skipBlock(); err != nil {
@@ -76,25 +83,51 @@ func (p *parser) parseKids(parent *Node, depth int) error {
 				continue
 			}
 			n := &Node{Kids: []*Node{}}
-			if err := p.parseKids(n, depth+1); err != nil {
+			if err := p.parseKids(n, depth+1, tokClose); err != nil {
 				return err
 			}
 			parent.Kids = append(parent.Kids, n)
+			if err := p.parseTemplateValue(parent, depth); err != nil {
+				return err
+			}
+		case tokParam:
+			n := &Node{Key: tok.val, Param: ParamSet, Kids: []*Node{}}
+			if tok.val[0] == '!' {
+				n.Key, n.Param = tok.val[1:], ParamUnset
+			}
+			if err := p.parseKids(n, depth+1, tokCloseParam); err != nil {
+				return err
+			}
+			if len(n.Kids) == 1 && n.Kids[0].Key == nil && n.Kids[0].Kids == nil {
+				n.Val, n.Quoted, n.Kids = n.Kids[0].Val, n.Kids[0].Quoted, nil
+			}
+			if !filter || p.keep[string(n.Key)] {
+				parent.Kids = append(parent.Kids, n)
+			}
+		case tokOp:
+			// In key position the first character of an operator is a key, as in =="bar"; the rest is read again.
+			p.lex.pos -= len(tok.val) - 1
+			tok = token{kind: tokBare, val: tok.val[:1]}
+			fallthrough
 		case tokBare, tokQuoted:
 			nxt, err := p.lex.peek()
 			if err != nil {
 				return err
 			}
-			if nxt.kind != tokEq && nxt.kind != tokOpen {
+			if nxt.kind != tokOp && nxt.kind != tokOpen {
 				if !filter {
 					parent.Kids = append(parent.Kids, &Node{Val: tok.val, Quoted: tok.kind == tokQuoted})
 				}
 				continue
 			}
-			if nxt.kind == tokEq {
+			var op string
+			if nxt.kind == tokOp {
 				p.lex.next()
+				if string(nxt.val) != "=" {
+					op = string(nxt.val)
+				}
 			}
-			n, err := p.parseValue(tok.val, depth, filter && !p.keep[string(tok.val)])
+			n, err := p.parseValue(tok.val, op, depth, filter && !p.keep[string(tok.val)])
 			if err != nil {
 				return err
 			}
@@ -105,13 +138,39 @@ func (p *parser) parseKids(parent *Node, depth int) error {
 	}
 }
 
-// parseValue reads the value after key; with skip set it consumes the value and returns nil.
-func (p *parser) parseValue(key []byte, depth int, skip bool) (*Node, error) {
+// parseTemplateValue reads the value of an object template such as { a=b }={ 1 2 } and adds it after the template.
+func (p *parser) parseTemplateValue(parent *Node, depth int) error {
+	nxt, err := p.lex.peek()
+	if err != nil || nxt.kind != tokOp || string(nxt.val) != "=" {
+		return err
+	}
+	p.lex.next()
+	tok, err := p.lex.next()
+	if err != nil {
+		return err
+	}
+	n := &Node{Val: tok.val, Quoted: tok.kind == tokQuoted}
+	switch tok.kind {
+	case tokBare, tokQuoted:
+	case tokOpen:
+		n.Kids = []*Node{}
+		if err := p.parseKids(n, depth+1, tokClose); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("missing value for template at offset %d", p.lex.pos)
+	}
+	parent.Kids = append(parent.Kids, n)
+	return nil
+}
+
+// parseValue reads the value after key and op; with skip set it consumes the value and returns nil.
+func (p *parser) parseValue(key []byte, op string, depth int, skip bool) (*Node, error) {
 	tok, err := p.lex.next()
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{Key: key}
+	n := &Node{Key: key, Op: op}
 	switch tok.kind {
 	case tokOpen:
 	case tokBare, tokQuoted:
@@ -140,7 +199,7 @@ func (p *parser) parseValue(key []byte, depth int, skip bool) (*Node, error) {
 		return nil, p.skipBlock()
 	}
 	n.Kids = []*Node{}
-	return n, p.parseKids(n, depth+1)
+	return n, p.parseKids(n, depth+1, tokClose)
 }
 
 // skipBlock consumes tokens up to the } that closes an already opened {.

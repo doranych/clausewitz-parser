@@ -14,6 +14,14 @@ func qkv(k, v string) *Node { return &Node{Key: []byte(k), Val: []byte(v), Quote
 func item(v string) *Node   { return &Node{Val: []byte(v)} }
 func qitem(v string) *Node  { return &Node{Val: []byte(v), Quoted: true} }
 
+func opkv(k, op, v string) *Node { return &Node{Key: []byte(k), Val: []byte(v), Op: op} }
+
+func pblock(k string, p Param, kids ...*Node) *Node {
+	n := obj(k, kids...)
+	n.Param = p
+	return n
+}
+
 func obj(k string, kids ...*Node) *Node { return hdr(k, "", kids...) }
 
 func hdr(k, h string, kids ...*Node) *Node {
@@ -83,7 +91,7 @@ func TestJominiTape(t *testing.T) {
 		{name: "tape.rs/test_empty_objects3", in: "foo={bar=val { } a=b} me=you", want: []*Node{obj("foo", kv("bar", "val"), kv("a", "b")), kv("me", "you")}},
 		{name: "tape.rs/test_spanning_objects", in: "army={name=abc} army={name=def}", want: []*Node{obj("army", kv("name", "abc")), obj("army", kv("name", "def"))}},
 		{name: "tape.rs/test_regression", in: "\x00 \"\x00", wantErr: true},
-		{name: "tape.rs/test_regression2", in: "\x00\x04!\x00", want: []*Node{item("\x00\x04!\x00")}},
+		{name: "tape.rs/test_regression2", in: "\x00\x04!\x00", wantErr: true},
 		{name: "tape.rs/test_too_heavily_nested", in: "foo=" + strings.Repeat("{", 100000), wantErr: true},
 		{name: "tape.rs/test_no_ws_comment", in: "foo=abc#def\nbar=qux", want: []*Node{kv("foo", "abc"), kv("bar", "qux")}},
 		{name: "tape.rs/test_bom", in: "\xef\xbb\xbf#hello", want: []*Node{}},
@@ -190,6 +198,90 @@ func TestJominiTape(t *testing.T) {
 		{name: "tape.rs/test_initial_end_does_not_panic", in: "}", want: []*Node{}},
 		{name: "tape.rs/test_semicolon_as_whitespace", in: "foo = 0.3;", want: []*Node{kv("foo", "0.3")}},
 		{name: "tape.rs/test_multiple_semicolons_as_whitespace", in: "a = 1; b = 2;; c = 3;", want: []*Node{kv("a", "1"), kv("b", "2"), kv("c", "3")}},
+		{name: "tape.rs/test_text_parser_tape", in: "foo={bar=1 qux=28}", want: []*Node{obj("foo", kv("bar", "1"), kv("qux", "28"))}},
+		{name: "tape.rs/test_text_parser_tape reuse", in: "foo2={bar2=3 qux2=29}", want: []*Node{obj("foo2", kv("bar2", "3"), kv("qux2", "29"))}},
+		{
+			name: "tape.rs/test_parameter_syntax_with_values",
+			in:   "mult = value:job_weights_research_modifier|JOB|head_researcher|",
+			want: []*Node{kv("mult", "value:job_weights_research_modifier|JOB|head_researcher|")},
+		},
+		{name: "tape.rs/test_variables", in: "@planet_standard_scale = 11", want: []*Node{kv("@planet_standard_scale", "11")}},
+		{
+			name: "tape.rs/test_interpolated_variable",
+			in:   "position = { @[1-leopard_x] @leopard_y }",
+			want: []*Node{obj("position", item("@[1-leopard_x]"), item("@leopard_y"))},
+		},
+		{name: "tape.rs/test_variable_value", in: "window_name = @default_window_name", want: []*Node{kv("window_name", "@default_window_name")}},
+		{name: "tape.rs/test_equal_identifier", in: `=="bar"`, want: []*Node{qkv("=", "bar")}},
+		{
+			name: "tape.rs/test_less_than_equal_operator",
+			in:   "scope:attacker.primary_title.tier <= tier_county",
+			want: []*Node{opkv("scope:attacker.primary_title.tier", "<=", "tier_county")},
+		},
+		{name: "tape.rs/test_less_than_operator", in: "count < 2", want: []*Node{opkv("count", "<", "2")}},
+		{name: "tape.rs/test_greater_than_operator", in: "age > 16", want: []*Node{opkv("age", ">", "16")}},
+		{name: "tape.rs/test_greater_than_equal_operator", in: "intrigue >= high_skill_rating", want: []*Node{opkv("intrigue", ">=", "high_skill_rating")}},
+		{name: "tape.rs/test_not_equal_operator", in: "count != 2", want: []*Node{opkv("count", "!=", "2")}},
+		{name: "tape.rs/test_not_exact_operator", in: "start_date == 1066.9.15", want: []*Node{opkv("start_date", "==", "1066.9.15")}},
+		{
+			name: "tape.rs/test_operator_in_object",
+			in:   "value={ date < 1941.7.7 is_preparing=true }",
+			want: []*Node{obj("value", opkv("date", "<", "1941.7.7"), kv("is_preparing", "true"))},
+		},
+		{name: "tape.rs/test_exists_operator", in: "c:RUS ?= this", want: []*Node{opkv("c:RUS", "?=", "this")}},
+		{name: "tape.rs/test_exists_operator_in_object_first_pair", in: "obj = { foo ?= 1 }", want: []*Node{obj("obj", opkv("foo", "?=", "1"))}},
+		{name: "tape.rs/test_not_equal_operator_in_object_first_pair", in: "obj = { foo != 1 }", want: []*Node{obj("obj", opkv("foo", "!=", "1"))}},
+		{
+			name: "tape.rs/test_parameter_value",
+			in:   "generate_advisor = { [[effect] $effect$ ] }",
+			want: []*Node{obj("generate_advisor", &Node{Key: []byte("effect"), Val: []byte("$effect$"), Param: ParamSet})},
+		},
+		{
+			name: "tape.rs/test_parameter_object",
+			in:   "generate_advisor = { [[scaled_skill] a=b ] }",
+			want: []*Node{obj("generate_advisor", pblock("scaled_skill", ParamSet, kv("a", "b")))},
+		},
+		{
+			name: "tape.rs/test_parameter_object2",
+			in:   "generate_advisor = { [[add] if = { a=b }] }",
+			want: []*Node{obj("generate_advisor", pblock("add", ParamSet, obj("if", kv("a", "b"))))},
+		},
+		{
+			name: "tape.rs/test_parameter_object3",
+			in:   "generate_advisor = { [[add] if = { a=b }] [[remove] if={c=d}] }",
+			want: []*Node{obj("generate_advisor",
+				pblock("add", ParamSet, obj("if", kv("a", "b"))),
+				pblock("remove", ParamSet, obj("if", kv("c", "d"))),
+			)},
+		},
+		{
+			name: "tape.rs/test_undefined_parameter_object",
+			in:   "generate_advisor = { [[!scaled_skill] a=b ] }",
+			want: []*Node{obj("generate_advisor", pblock("scaled_skill", ParamUnset, kv("a", "b")))},
+		},
+		{name: "tape.rs/test_parameter_eof", in: "[[", wantErr: true},
+		// jomini rejects top-level list elements, but Stellaris tag files such as common/job_tags/00_tags.txt are made of them.
+		{name: "tape.rs/incomplete_object_fail_to_parse", in: "T&}", want: []*Node{item("T&")}},
+		{
+			name: "tape.rs/test_object_template_syntax",
+			in:   "obj={\n\t{ a = b }={ 1 2 3 }\n}",
+			want: []*Node{obj("obj", obj("", kv("a", "b")), obj("", item("1"), item("2"), item("3")))},
+		},
+		{
+			name: "tape.rs/test_object_template_syntax2",
+			in:   "obj={\n\t{ foo }={ 1000 }\n}",
+			want: []*Node{obj("obj", obj("", item("foo")), obj("", item("1000")))},
+		},
+		{
+			name: "tape.rs/test_object_template_syntax_simple_scalar",
+			in:   "obj={ { a=b }=16 }",
+			want: []*Node{obj("obj", obj("", kv("a", "b")), item("16"))},
+		},
+		{
+			name: "tape.rs/test_object_template_syntax_scalar_value",
+			in:   "obj={ { 31=16 }=16 { 32=17 }=18 }",
+			want: []*Node{obj("obj", obj("", kv("31", "16")), item("16"), obj("", kv("32", "17")), item("18"))},
+		},
 		{
 			name: "dom.rs/text_reader_read_fields",
 			in:   "name=aaa name=bbb core=123 core=456 name=ccc name=ddd",
@@ -211,6 +303,72 @@ func TestJominiTape(t *testing.T) {
 			}`,
 			want: []*Node{obj("has_leviathans", item("optimize_memory"), qkv("host_has_dlc", "Leviathans Story Pack"))},
 		},
+		{name: "dom.rs/simple_text_reader_text", in: "foo=bar", want: []*Node{kv("foo", "bar")}},
+		{name: "dom.rs/simple_text_reader_obj", in: "foo={bar=qux}", want: []*Node{obj("foo", kv("bar", "qux"))}},
+		{name: "dom.rs/simple_text_reader_array", in: "foo={bar qux}", want: []*Node{obj("foo", item("bar"), item("qux"))}},
+		{
+			name: "dom.rs/text_reader_read_fields_consume",
+			in:   "name=aaa name=bbb core=123 name=ccc name=ddd",
+			want: []*Node{kv("name", "aaa"), kv("name", "bbb"), kv("core", "123"), kv("name", "ccc"), kv("name", "ddd")},
+		},
+		{name: "dom.rs/text_reader_mixed_object_1", in: "levels={10 0=1 0=2}", want: []*Node{obj("levels", item("10"), kv("0", "1"), kv("0", "2"))}},
+		{
+			name: "dom.rs/text_reader_mixed_object_2",
+			in:   "brittany_area = { #5\n\tcolor = { 118  99  151 }\n\t169 170 171 172 4384\n}",
+			want: []*Node{obj("brittany_area",
+				obj("color", item("118"), item("99"), item("151")),
+				item("169"), item("170"), item("171"), item("172"), item("4384"),
+			)},
+		},
+		{
+			name: "dom.rs/text_reader_mixed_object_3",
+			in:   "brittany_area = { #5\n\tcolor = { 118  99  151 }\n\tcolor = { 118  99  151 }\n\t169 170 171 172 4384\n}",
+			want: []*Node{obj("brittany_area",
+				obj("color", item("118"), item("99"), item("151")),
+				obj("color", item("118"), item("99"), item("151")),
+				item("169"), item("170"), item("171"), item("172"), item("4384"),
+			)},
+		},
+		{name: "dom.rs/text_reader_mixed_object_4", in: "levels={a=b 10 c=d 20}", want: []*Node{obj("levels", kv("a", "b"), item("10"), kv("c", "d"), item("20"))}},
+		{
+			name: "dom.rs/test_object_template_basic_dom_reader",
+			in:   "obj={ { a = b }={ 1 2 3 } }",
+			want: []*Node{obj("obj", obj("", kv("a", "b")), obj("", item("1"), item("2"), item("3")))},
+		},
+		{
+			name: "dom.rs/test_object_template_single_key_dom_reader",
+			in:   "obj={ { foo }={ 1000 } }",
+			want: []*Node{obj("obj", obj("", item("foo")), obj("", item("1000")))},
+		},
+		{
+			name: "dom.rs/test_object_template_scalar_value_dom_reader",
+			in:   "obj={ { a=b }=16 }",
+			want: []*Node{obj("obj", obj("", kv("a", "b")), item("16"))},
+		},
+		{
+			name: "dom.rs/test_object_template_multiple_pairs_dom_reader",
+			in:   "obj={ { 31=16 }=16 { 32=17 }=18 }",
+			want: []*Node{obj("obj", obj("", kv("31", "16")), item("16"), obj("", kv("32", "17")), item("18"))},
+		},
+		{
+			name: "dom.rs/test_object_template_complex_dom_reader",
+			in:   "config={ { debug=yes logging=verbose }={ output_file=debug.log level=trace } }",
+			want: []*Node{obj("config",
+				obj("", kv("debug", "yes"), kv("logging", "verbose")),
+				obj("", kv("output_file", "debug.log"), kv("level", "trace")),
+			)},
+		},
+		{name: "dom.rs/text_reader_empty_container", in: "active_idea_groups={ }", want: []*Node{obj("active_idea_groups")}},
+		{name: "dom.rs/text_reader_header", in: "color = rgb { 10 20 30 }", want: []*Node{hdr("color", "rgb", item("10"), item("20"), item("30"))}},
+		{name: "dom.rs/reader_crash1", in: "a=r{}", want: []*Node{kv("a", "r")}},
+		{name: "dom.rs/text_reader_object_fields", in: "a{b=}", wantErr: true},
+		{name: "dom.rs/text_reader_object_fields_op2", in: "a{}b>{}", want: []*Node{obj("a"), {Key: []byte("b"), Op: ">", Kids: []*Node{}}}},
+		{name: "dom.rs/text_reader_object_fields_dupe", in: "a{b=c d=E d}", want: []*Node{obj("a", kv("b", "c"), kv("d", "E"), item("d"))}},
+		{name: "dom.rs/text_reader_object_fields_header", in: "a{}b>r{}", want: []*Node{obj("a"), opkv("b", ">", "r")}},
+		{name: "dom.rs/text_reader_object_fields_dupe2", in: "a{b=c d b}", want: []*Node{obj("a", kv("b", "c"), item("d"), item("b"))}},
+		{name: "dom.rs/text_reader_regression", in: "a={b{}=2}", want: []*Node{obj("a", obj("b"), item("="), item("2"))}},
+		{name: "dom.rs/text_reader_regression2", in: "r={c=d=@{y=u}", want: []*Node{obj("r", kv("c", "d"), item("="), obj("@", kv("y", "u")))}},
+		{name: "dom.rs/text_reader_regression3", in: "a={{t c=d = b}}", want: []*Node{obj("a", obj("", item("t"), kv("c", "d"), item("="), item("b")))}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
